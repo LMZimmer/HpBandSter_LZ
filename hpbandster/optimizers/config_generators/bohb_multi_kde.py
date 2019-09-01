@@ -17,7 +17,7 @@ from hpbandster.core.base_config_generator import base_config_generator
 class BOHB_Multi_KDE(base_config_generator):
 	def __init__(self, configspace, min_points_in_model = None,
 				 top_n_percent=15, num_samples = 64, random_fraction=1/3,
-				 bandwidth_factor=3, min_bandwidth=1e-3, self.budgets=None,
+				 bandwidth_factor=3, min_bandwidth=1e-3, budgets=None,
 				**kwargs):
 		"""
 			Fits for each given budget a kernel density estimator on the best N percent of the
@@ -46,6 +46,7 @@ class BOHB_Multi_KDE(base_config_generator):
 
 		"""
 		super().__init__(**kwargs)
+                self.budgets = budgets
 		self.top_n_percent=top_n_percent
 		self.configspace = configspace
 		self.bw_factor = bandwidth_factor
