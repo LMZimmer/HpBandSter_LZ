@@ -11,9 +11,9 @@ import ConfigSpace as CS
 
 from hpbandster.core.master import Master
 from hpbandster.optimizers.iterations import SuccessiveHalving
-from hpbandster.optimizers.config_generators.bohb_multi_kde import BOHB_Multi_KDE as CG_BOHB_Multi_KDE
+from hpbandster.optimizers.config_generators.bohb import BOHB as CG_BOHB
 
-class BOHB_Multi_KDE(Master):
+class BOHB(Master):
 	def __init__(self, configspace = None,
 					eta=3, min_budget=0.01, max_budget=1,
 					min_points_in_model = None,	top_n_percent=15,
@@ -81,6 +81,18 @@ class BOHB_Multi_KDE(Master):
 			raise ValueError("You have to provide a valid CofigSpace object")
 
 
+
+		cg = CG_BOHB( configspace = configspace,
+					min_points_in_model = min_points_in_model,
+					top_n_percent=top_n_percent,
+					num_samples = num_samples,
+					random_fraction=random_fraction,
+					bandwidth_factor=bandwidth_factor,
+					min_bandwidth = min_bandwidth
+					)
+
+		super().__init__(config_generator=cg, **kwargs)
+
 		# Hyperband related stuff
 		self.eta = eta
 		self.min_budget = min_budget
@@ -89,17 +101,6 @@ class BOHB_Multi_KDE(Master):
 		# precompute some HB stuff
 		self.max_SH_iter = -int(np.log(min_budget/max_budget)/np.log(eta)) + 1
 		self.budgets = max_budget * np.power(eta, -np.linspace(self.max_SH_iter-1, 0, self.max_SH_iter))
-
-		cg = CG_BOHB_Multi_KDE(	configspace = configspace,
-					min_points_in_model = min_points_in_model,
-					top_n_percent=top_n_percent,
-					num_samples = num_samples,
-					random_fraction=random_fraction,
-					bandwidth_factor=bandwidth_factor,
-					min_bandwidth = min_bandwidth,
-					budgets = self.budgets)
-
-		super().__init__(config_generator=cg, **kwargs)
 
 		self.config.update({
 						'eta'        : eta,

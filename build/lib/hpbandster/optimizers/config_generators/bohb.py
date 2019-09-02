@@ -14,10 +14,10 @@ import statsmodels.api as sm
 from hpbandster.core.base_config_generator import base_config_generator
 
 
-class BOHB_Multi_KDE(base_config_generator):
+class BOHB(base_config_generator):
 	def __init__(self, configspace, min_points_in_model = None,
-				top_n_percent=15, num_samples = 64, random_fraction=1/3,
-				bandwidth_factor=3, min_bandwidth=1e-3, budgets=None,
+				 top_n_percent=15, num_samples = 64, random_fraction=1/3,
+				 bandwidth_factor=3, min_bandwidth=1e-3,
 				**kwargs):
 		"""
 			Fits for each given budget a kernel density estimator on the best N percent of the
@@ -46,7 +46,6 @@ class BOHB_Multi_KDE(base_config_generator):
 
 		"""
 		super().__init__(**kwargs)
-		self.budgets = budgets
 		self.top_n_percent=top_n_percent
 		self.configspace = configspace
 		self.bw_factor = bandwidth_factor
@@ -86,18 +85,16 @@ class BOHB_Multi_KDE(base_config_generator):
 		self.cat_probs = []
 		
 
-                # initialize as many KDEs as there are successive halfing iterations
-		n_iter = len(self.budgets)
-		self.configs = [dict()] * n_iter
-		self.losses = [dict()] * n_iter
-		self.good_config_rankings = [dict()] * n_iter
-		self.kde_models = [dict()] * n_iter
+		self.configs = dict()
+		self.losses = dict()
+		self.good_config_rankings = dict()
+		self.kde_models = dict()
 
 
 	def largest_budget_with_model(self):
-		if len(self.kde_models[0]) == 0:
+		if len(self.kde_models) == 0:
 			return(-float('inf'))
-		return(max(self.kde_models[0].keys()))
+		return(max(self.kde_models.keys()))
 
 	def get_config(self, budget):
 		"""
@@ -119,15 +116,12 @@ class BOHB_Multi_KDE(base_config_generator):
 		self.logger.debug('start sampling a new configuration.')
 		
 
-		# Infer number of KDEs to use at current budget
-		n_kdes = np.where(self.budgets==budget)[0][0] + 1
-
 		sample = None
 		info_dict = {}
 		
 		# If no model is available, sample from prior
 		# also mix in a fraction of random configs
-		if len(self.kde_models[0].keys()) == 0 or np.random.rand() < self.random_fraction:
+		if len(self.kde_models.keys()) == 0 or np.random.rand() < self.random_fraction:
 			sample =  self.configspace.sample_configuration()
 			info_dict['model_based_pick'] = False
 
@@ -138,28 +132,22 @@ class BOHB_Multi_KDE(base_config_generator):
 			try:
 				
 				#sample from largest budget
-				budget = max(self.kde_models[0].keys())     # UNSURE (following lines: pdfs combined correctly? initialize new pdfs with old?)
+				budget = max(self.kde_models.keys())
 
-				l = []
-				g = []
-				kde_good = []
-				kde_bad = []
-
-				for ind in range(n_kdes):
-					if len(self.kde_models[ind].keys()) > 0:
-						l.append(self.kde_models[ind][budget]['good'].pdf)
-						g.append(self.kde_models[ind][budget]['bad' ].pdf)
-						kde_good.append(self.kde_models[ind][budget]['good'])
-						kde_bad.append(self.kde_models[ind][budget]['bad'])
+				l = self.kde_models[budget]['good'].pdf
+				g = self.kde_models[budget]['bad' ].pdf
 			
-				minimize_me = lambda x: max(1e-32, np.mean(np.array(g(x))))/max(np.mean(np.array(l(x))),1e-32)
+				minimize_me = lambda x: max(1e-32, g(x))/max(l(x),1e-32)
 				
+				kde_good = self.kde_models[budget]['good']
+				kde_bad = self.kde_models[budget]['bad']
+
 				for i in range(self.num_samples):
-					idx = np.random.randint(0, len(kde_good[0].data))          # WHAT IS THIS?
-					datum = kde_good[0].data[idx]                              # AND THIS?
+					idx = np.random.randint(0, len(kde_good.data))
+					datum = kde_good.data[idx]
 					vector = []
 					
-					for m,bw,t in zip(datum, kde_good[0].bw, self.vartypes):   # AND THIS?
+					for m,bw,t in zip(datum, kde_good.bw, self.vartypes):
 						
 						bw = max(bw, self.min_bandwidth)
 						if t == 0:
@@ -294,84 +282,77 @@ class BOHB_Multi_KDE(base_config_generator):
 
 		super().new_result(job)
 
-		budget = job.kwargs["budget"]
-		# Infer number of KDEs to use at current budget
-		n_kdes = np.where(self.budgets==budget)[0][0] + 1
-
 		if job.result is None:
 			# One could skip crashed results, but we decided to
 			# assign a +inf loss and count them as bad configurations
-			losses = [np.inf]*n_kdes
+			loss = np.inf
 		else:
 			# same for non numeric losses.
 			# Note that this means losses of minus infinity will count as bad!
-			losses = job.result["losses"] if np.isfinite(job.result["loss"]) else [np.inf]*n_kdes
+			loss = job.result["loss"] if np.isfinite(job.result["loss"]) else np.inf
 
-		# if the budget has not been seen by a new kde, initialize its configs dict with an empty list
-		for ind in range(n_kdes):
-			if budget not in self.configs[ind].keys():
-				self.configs[ind][budget] = []
-				self.losses[ind][budget] = []                 # careful losses is not self.losses
+		budget = job.kwargs["budget"]
+
+		if budget not in self.configs.keys():
+			self.configs[budget] = []
+			self.losses[budget] = []
 
 		# skip model building if we already have a bigger model
-		if max(list(self.kde_models[0].keys()) + [-np.inf]) > budget:
+		if max(list(self.kde_models.keys()) + [-np.inf]) > budget:
 			return
 
 		# We want to get a numerical representation of the configuration in the original space
 
 		conf = ConfigSpace.Configuration(self.configspace, job.kwargs["config"])
-		for ind in range(n_kdes):
-			self.configs[ind][budget].append(conf.get_array())
-			self.losses[ind][budget].append(losses[ind])
+		self.configs[budget].append(conf.get_array())
+		self.losses[budget].append(loss)
 
-
+		
 		# skip model building:
 		#		a) if not enough points are available
-		if len(self.configs[0][budget]) <= self.min_points_in_model-1:
-			self.logger.debug("Only %i run(s) for budget %f available, need more than %s -> can't build model!"%(len(self.configs[0][budget]), budget, self.min_points_in_model+1))
+		if len(self.configs[budget]) <= self.min_points_in_model-1:
+			self.logger.debug("Only %i run(s) for budget %f available, need more than %s -> can't build model!"%(len(self.configs[budget]), budget, self.min_points_in_model+1))
 			return
 
 		#		b) during warnm starting when we feed previous results in and only update once
 		if not update_model:
 			return
 
-		for ind in range(n_kdes):
-			train_configs = np.array(self.configs[ind][budget])
-			train_losses =  np.array(self.losses[ind][budget])
+		train_configs = np.array(self.configs[budget])
+		train_losses =  np.array(self.losses[budget])
 
-			n_good= max(self.min_points_in_model, (self.top_n_percent * train_configs.shape[0])//100 )
-			#n_bad = min(max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100), 10)
-			n_bad = max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100)
+		n_good= max(self.min_points_in_model, (self.top_n_percent * train_configs.shape[0])//100 )
+		#n_bad = min(max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100), 10)
+		n_bad = max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100)
 
-			# Refit KDEs for the current budget
-			idx = np.argsort(train_losses)
+		# Refit KDE for the current budget
+		idx = np.argsort(train_losses)
 
-			train_data_good = self.impute_conditional_data(train_configs[idx[:n_good]])
-			train_data_bad  = self.impute_conditional_data(train_configs[idx[n_good:n_good+n_bad]])
+		train_data_good = self.impute_conditional_data(train_configs[idx[:n_good]])
+		train_data_bad  = self.impute_conditional_data(train_configs[idx[n_good:n_good+n_bad]])
 
-			if train_data_good.shape[0] <= train_data_good.shape[1]:
-				return
-			if train_data_bad.shape[0] <= train_data_bad.shape[1]:
-				return
+		if train_data_good.shape[0] <= train_data_good.shape[1]:
+			return
+		if train_data_bad.shape[0] <= train_data_bad.shape[1]:
+			return
 		
-			#more expensive crossvalidation method
-			#bw_estimation = 'cv_ls'
+		#more expensive crossvalidation method
+		#bw_estimation = 'cv_ls'
 
-			# quick rule of thumb
-			bw_estimation = 'normal_reference'
+		# quick rule of thumb
+		bw_estimation = 'normal_reference'
 
-			bad_kde = sm.nonparametric.KDEMultivariate(data=train_data_bad,  var_type=self.kde_vartypes, bw=bw_estimation)
-			good_kde = sm.nonparametric.KDEMultivariate(data=train_data_good, var_type=self.kde_vartypes, bw=bw_estimation)
+		bad_kde = sm.nonparametric.KDEMultivariate(data=train_data_bad,  var_type=self.kde_vartypes, bw=bw_estimation)
+		good_kde = sm.nonparametric.KDEMultivariate(data=train_data_good, var_type=self.kde_vartypes, bw=bw_estimation)
 
-			bad_kde.bw = np.clip(bad_kde.bw, self.min_bandwidth,None)
-			good_kde.bw = np.clip(good_kde.bw, self.min_bandwidth,None)
+		bad_kde.bw = np.clip(bad_kde.bw, self.min_bandwidth,None)
+		good_kde.bw = np.clip(good_kde.bw, self.min_bandwidth,None)
 
-			self.kde_models[ind][budget] = {
-							'good': good_kde,
-							'bad' : bad_kde
-							}
+		self.kde_models[budget] = {
+				'good': good_kde,
+				'bad' : bad_kde
+		}
 
-			if ind==0:
-				# update probs for the categorical parameters for later sampling
-				self.logger.debug('done building a new model for budget %f based on %i/%i split\nBest loss for this budget:%f\n\n\n\n\n'%(budget, n_good, n_bad, np.min(train_losses)))
+		# update probs for the categorical parameters for later sampling
+		self.logger.debug('done building a new model for budget %f based on %i/%i split\nBest loss for this budget:%f\n\n\n\n\n'%(budget, n_good, n_bad, np.min(train_losses)))
 
