@@ -89,9 +89,7 @@ class BOHB_Multi_KDE(base_config_generator):
 		
 
                 # initialize as many KDEs as there are successive halfing iterations
-		with open("dump.txt", "a+") as file:
-                	file.write("CG: INITIALIZING BOHB_MULTI_KDE. CREATING " + str(n_kdes) + " KDE MODELS..." + "\n")								# HERE
-		print("CG: INITIALIZING BOHB_MULTI_KDE. CREATING", n_kdes, "KDE MODELS...")
+		print("CG: INITIALIZING BOHB_MULTI_KDE. CREATING", n_kdes, "KDE MODELS...")					# HERE
 		self.configs = np.array([dict() for i in range(self.max_kdes)])
 		self.losses = np.array([dict() for i in range(self.max_kdes)])
 		self.good_config_rankings = np.array([dict() for i in range(self.max_kdes)])
@@ -151,9 +149,7 @@ class BOHB_Multi_KDE(base_config_generator):
 		current_step = max_steps - int((math.log(max(self.budgets)) - math.log(budget)) / math.log(3)) if budget > 1e-10 else 0
 		n_kdes = math.floor(math.pow(max_datasets, current_step/max(1, max_steps)) + 1e-10)
 
-		with open("dump.txt", "a+") as file:
-			file.write("CG: SAMPLING CONFIG FOR BUDGET " + str(budget) + " ... USING " + str(n_kdes) + " KDE MODELS" + "\n")						# HERE
-		print("CG: SAMPLING CONFIG FOR BUDGET", budget, "... USING", n_kdes, "KDE MODELS")
+		print("CG: SAMPLING CONFIG FOR BUDGET", budget, "... USING", n_kdes, "KDE MODELS")									# HERE
 
 		sample = None
 		info_dict = {}
@@ -179,9 +175,7 @@ class BOHB_Multi_KDE(base_config_generator):
 
 				for ind in range(n_kdes):
 					if len(self.kde_models[ind].keys()) > 0:
-						with open("dump.txt", "a+") as file:													# HERE
-							file.write("CG: APPENDING KDE MODEl " + str(ind) +"\n")
-						print("CG: APPENDING KDE MODEl", ind)
+						print("CG: APPENDING KDE MODEl", ind)									# HERE
 						l.append(self.kde_models[ind][budget]['good'].pdf)
 						g.append(self.kde_models[ind][budget]['bad' ].pdf)
 						kde_good.append(self.kde_models[ind][budget]['good'])
@@ -343,9 +337,7 @@ class BOHB_Multi_KDE(base_config_generator):
 			# same for non numeric losses.
 			# Note that this means losses of minus infinity will count as bad!
 			losses = job.result["losses"] if np.isfinite(job.result["loss"]) else [np.inf]*n_kdes
-			with open("dump.txt", "a+") as file:													# HERE
-				file.write("CG: REGISTER NEW RESULT FOR BUDGET " + str(budget) + " ... FOUND LOSSES " + str(losses) +"\n")
-			print("CG: REGISTER NEW RESULT FOR BUDGET", budget, "... FOUND LOSSES", losses)
+			print("CG: REGISTER NEW RESULT FOR BUDGET", budget, "... FOUND LOSSES", losses)								# HERE
 
 		# update as many kdes as there are losses
 		n_kdes = len(losses)
@@ -393,9 +385,7 @@ class BOHB_Multi_KDE(base_config_generator):
 
 			train_configs = np.array(self.configs[ind][budget])
 			train_losses =  np.array(self.losses[ind][budget])
-			with open("dump.txt", "a+") as file:													# HERE
-				file.write("CG: UPDATING MODEL " + str(ind) + " WITH LOSS " + str(train_losses) +"\n")
-			print("CG: UPDATING MODEL", ind, "WITH LOSS", train_losses)
+			print("CG: UPDATING MODEL", ind, "WITH LOSS", train_losses)										# HERE
 
 			n_good= max(self.min_points_in_model, (self.top_n_percent * train_configs.shape[0])//100 )
 			#n_bad = min(max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100), 10)

@@ -110,8 +110,6 @@ class BOHB_Multi_KDE(Master):
 
 		super().__init__(config_generator=cg, **kwargs)
 
-		print("NOW BUDGETS ARE:", self.budgets)													# HERE
-
 		self.config.update({
 						'eta'        : eta,
 						'min_budget' : min_budget,
@@ -153,6 +151,6 @@ class BOHB_Multi_KDE(Master):
 		n0 = int(np.floor((self.max_SH_iter)/(s+1)) * self.eta**s)
 		ns = [max(int(n0*(self.eta**(-i))), 1) for i in range(s+1)]
 
-		print("GETTING NEXT ITERATION... MAXITER:", self.max_SH_iter, ", ITERATION:", iteration, ", s:", s, " N0:", n0, " NS", ns, "BUDGETS:", self.budgets)		# HERE
+		print("BOHB_MULTI_KDE: GETTING NEXT ITERATION... MAXITER:", self.max_SH_iter, ", ITERATION:", iteration, "BUDGETS:", self.budgets)		# HERE
 
 		return(SuccessiveHalving(HPB_iter=iteration, num_configs=ns, budgets=self.budgets[(-s-1):], config_sampler=self.config_generator.get_config, **iteration_kwargs))
