@@ -3,6 +3,8 @@ import time
 import math
 import copy
 import logging
+import itertools
+import random
 
 import numpy as np
 
@@ -18,8 +20,8 @@ class BOHB_Multi_KDE(Master):
 					eta=3, min_budget=0.01, max_budget=1,
 					min_points_in_model = None,	top_n_percent=15,
 					num_samples = 64, random_fraction=1/3, bandwidth_factor=3,
-					min_bandwidth=1e-3,
-					**kwargs ):
+					min_bandwidth=1e-3, n_kdes=1, permutations=None,
+					**kwargs):
 		"""
                 BOHB performs robust and efficient hyperparameter optimization
                 at scale by combining the speed of Hyperband searches with the
@@ -81,6 +83,9 @@ class BOHB_Multi_KDE(Master):
 			raise ValueError("You have to provide a valid CofigSpace object")
 
 
+		self.n_kdes = n_kdes
+		self.permutations = permutations
+
 		# Hyperband related stuff
 		self.eta = eta
 		self.min_budget = min_budget
@@ -90,6 +95,8 @@ class BOHB_Multi_KDE(Master):
 		self.max_SH_iter = -int(np.log(min_budget/max_budget)/np.log(eta)) + 1
 		self.budgets = max_budget * np.power(eta, -np.linspace(self.max_SH_iter-1, 0, self.max_SH_iter))
 
+		print("BOHB_MULTI_KDE: MAXITER:", self.max_SH_iter, ", BUDGETS:", self.budgets, ", ETA:", self.eta)					# HERE
+
 		cg = CG_BOHB_Multi_KDE(	configspace = configspace,
 					min_points_in_model = min_points_in_model,
 					top_n_percent=top_n_percent,
@@ -97,9 +104,13 @@ class BOHB_Multi_KDE(Master):
 					random_fraction=random_fraction,
 					bandwidth_factor=bandwidth_factor,
 					min_bandwidth = min_bandwidth,
-					budgets = self.budgets)
+					budgets = self.budgets,
+					n_kdes=self.n_kdes,
+					eta=self.eta)
 
 		super().__init__(config_generator=cg, **kwargs)
+
+		print("NOW BUDGETS ARE:", self.budgets)													# HERE
 
 		self.config.update({
 						'eta'        : eta,
@@ -114,6 +125,7 @@ class BOHB_Multi_KDE(Master):
 						'bandwidth_factor' : bandwidth_factor,
 						'min_bandwidth': min_bandwidth
 					})
+
 
 	def get_next_iteration(self, iteration, iteration_kwargs={}):
 		"""
@@ -130,11 +142,17 @@ class BOHB_Multi_KDE(Master):
 			SuccessiveHalving: the SuccessiveHalving iteration with the
 				corresponding number of configurations
 		"""
+		# update cg kde order
+		if self.permutations is not None:
+			print("BOHB_MULTI: SH ITERATION", iteration, "PERMUTING KDES TO", self.permutations[iteration%len(self.permutations)])
+			self.config_generator.permute_kdes(self.permutations[iteration%len(self.permutations)])
 		
 		# number of 'SH rungs'
 		s = self.max_SH_iter - 1 - (iteration%self.max_SH_iter)
 		# number of configurations in that bracket
 		n0 = int(np.floor((self.max_SH_iter)/(s+1)) * self.eta**s)
 		ns = [max(int(n0*(self.eta**(-i))), 1) for i in range(s+1)]
+
+		print("GETTING NEXT ITERATION... MAXITER:", self.max_SH_iter, ", ITERATION:", iteration, ", s:", s, " N0:", n0, " NS", ns, "BUDGETS:", self.budgets)		# HERE
 
 		return(SuccessiveHalving(HPB_iter=iteration, num_configs=ns, budgets=self.budgets[(-s-1):], config_sampler=self.config_generator.get_config, **iteration_kwargs))

@@ -1,6 +1,7 @@
 import logging
 from copy import deepcopy
 import traceback
+import math
 
 
 import ConfigSpace
@@ -17,8 +18,8 @@ from hpbandster.core.base_config_generator import base_config_generator
 class BOHB_Multi_KDE(base_config_generator):
 	def __init__(self, configspace, min_points_in_model = None,
 				top_n_percent=15, num_samples = 64, random_fraction=1/3,
-				bandwidth_factor=3, min_bandwidth=1e-3, budgets=None,
-				**kwargs):
+				bandwidth_factor=3, min_bandwidth=1e-3, budgets=None, eta=3,
+				n_kdes=1, **kwargs):
 		"""
 			Fits for each given budget a kernel density estimator on the best N percent of the
 			evaluated configurations on this budget.
@@ -51,6 +52,7 @@ class BOHB_Multi_KDE(base_config_generator):
 		self.configspace = configspace
 		self.bw_factor = bandwidth_factor
 		self.min_bandwidth = min_bandwidth
+		self.max_kdes = n_kdes
 
 		self.min_points_in_model = min_points_in_model
 		if min_points_in_model is None:
@@ -87,12 +89,36 @@ class BOHB_Multi_KDE(base_config_generator):
 		
 
                 # initialize as many KDEs as there are successive halfing iterations
-		n_iter = len(self.budgets)
-		self.configs = [dict()] * n_iter
-		self.losses = [dict()] * n_iter
-		self.good_config_rankings = [dict()] * n_iter
-		self.kde_models = [dict()] * n_iter
+		with open("dump.txt", "a+") as file:
+                	file.write("CG: INITIALIZING BOHB_MULTI_KDE. CREATING " + str(n_kdes) + " KDE MODELS..." + "\n")								# HERE
+		print("CG: INITIALIZING BOHB_MULTI_KDE. CREATING", n_kdes, "KDE MODELS...")
+		self.configs = np.array([dict() for i in range(self.max_kdes)])
+		self.losses = np.array([dict() for i in range(self.max_kdes)])
+		self.good_config_rankings = np.array([dict() for i in range(self.max_kdes)])
+		self.kde_models = np.array([dict() for i in range(self.max_kdes)])
+		self.last_permutation = [idx for idx in range(len(self.kde_models))]
 
+	def permute_kdes(self, permutation):
+		self.invert_permutations()
+		self.configs = self.configs[permutation]
+		self.losses = self.losses[permutation]
+		self.good_config_rankings = self.good_config_rankings[permutation]
+		self.kde_models = self.kde_models[permutation]
+
+		self.last_permutation = permutation
+
+	def invert_permutations(self):	# Need to revert it first such that it is the same as APT ...
+		perm_inv = self.get_inverse_permutation(self.last_permutation)
+		self.configs = self.configs[perm_inv]
+		self.losses = self.losses[perm_inv]
+		self.good_config_rankings = self.good_config_rankings[perm_inv]
+		self.kde_models = self.kde_models[perm_inv]
+
+	def get_inverse_permutation(self, perm):
+		inverse = [0] * len(perm)
+		for i,p in enumerate(perm):
+			inverse[p] = i
+		return inverse
 
 	def largest_budget_with_model(self):
 		if len(self.kde_models[0]) == 0:
@@ -119,8 +145,15 @@ class BOHB_Multi_KDE(base_config_generator):
 		self.logger.debug('start sampling a new configuration.')
 		
 
-		# Infer number of KDEs to use at current budget
-		n_kdes = np.where(self.budgets==budget)[0][0] + 1
+		# Infer number of KDEs to use at current budget (mimic MultiAutoPyTorch implementation)
+		max_datasets = self.max_kdes
+		max_steps = len(self.budgets)
+		current_step = max_steps - int((math.log(max(self.budgets)) - math.log(budget)) / math.log(3)) if budget > 1e-10 else 0
+		n_kdes = math.floor(math.pow(max_datasets, current_step/max(1, max_steps)) + 1e-10)
+
+		with open("dump.txt", "a+") as file:
+			file.write("CG: SAMPLING CONFIG FOR BUDGET " + str(budget) + " ... USING " + str(n_kdes) + " KDE MODELS" + "\n")						# HERE
+		print("CG: SAMPLING CONFIG FOR BUDGET", budget, "... USING", n_kdes, "KDE MODELS")
 
 		sample = None
 		info_dict = {}
@@ -139,7 +172,6 @@ class BOHB_Multi_KDE(base_config_generator):
 				
 				#sample from largest budget
 				budget = max(self.kde_models[0].keys())     # UNSURE (following lines: pdfs combined correctly? initialize new pdfs with old?)
-
 				l = []
 				g = []
 				kde_good = []
@@ -147,19 +179,24 @@ class BOHB_Multi_KDE(base_config_generator):
 
 				for ind in range(n_kdes):
 					if len(self.kde_models[ind].keys()) > 0:
+						with open("dump.txt", "a+") as file:													# HERE
+							file.write("CG: APPENDING KDE MODEl " + str(ind) +"\n")
+						print("CG: APPENDING KDE MODEl", ind)
 						l.append(self.kde_models[ind][budget]['good'].pdf)
 						g.append(self.kde_models[ind][budget]['bad' ].pdf)
 						kde_good.append(self.kde_models[ind][budget]['good'])
 						kde_bad.append(self.kde_models[ind][budget]['bad'])
-			
-				minimize_me = lambda x: max(1e-32, np.mean(np.array(g(x))))/max(np.mean(np.array(l(x))),1e-32)
+
+				mean_g = lambda x: np.mean(np.array([func.__call__(x) for func in g]))
+				mean_l = lambda x: np.mean(np.array([func.__call__(x) for func in l]))
+				minimize_me = lambda x: max(1e-32,mean_g(x))/max(mean_l(x),1e-32)			# g/l becomes mean over all g/ mean over all l
 				
 				for i in range(self.num_samples):
-					idx = np.random.randint(0, len(kde_good[0].data))          # WHAT IS THIS?
-					datum = kde_good[0].data[idx]                              # AND THIS?
+					idx = np.random.randint(0, len(kde_good[0].data))		# ALL CONFIGS SEEN ARE IN THE 0th KDE
+					datum = kde_good[0].data[idx]
 					vector = []
 					
-					for m,bw,t in zip(datum, kde_good[0].bw, self.vartypes):   # AND THIS?
+					for m,bw,t in zip(datum, kde_good[0].bw, self.vartypes):
 						
 						bw = max(bw, self.min_bandwidth)
 						if t == 0:
@@ -167,8 +204,8 @@ class BOHB_Multi_KDE(base_config_generator):
 							try:
 								vector.append(sps.truncnorm.rvs(-m/bw,(1-m)/bw, loc=m, scale=bw))
 							except:
-								self.logger.warning("Truncated Normal failed for:\ndatum=%s\nbandwidth=%s\nfor entry with value %s"%(datum, kde_good.bw, m))
-								self.logger.warning("data in the KDE:\n%s"%kde_good.data)
+								self.logger.warning("Truncated Normal failed for:\ndatum=%s\nbandwidth=%s\nfor entry with value %s"%(datum, kde_good[0].bw, m))
+								self.logger.warning("data in the KDE:\n%s"%kde_good[0].data)
 						else:
 							
 							if np.random.rand() < (1-bw):
@@ -179,8 +216,8 @@ class BOHB_Multi_KDE(base_config_generator):
 
 					if not np.isfinite(val):
 						self.logger.warning('sampled vector: %s has EI value %s'%(vector, val))
-						self.logger.warning("data in the KDEs:\n%s\n%s"%(kde_good.data, kde_bad.data))
-						self.logger.warning("bandwidth of the KDEs:\n%s\n%s"%(kde_good.bw, kde_bad.bw))
+						self.logger.warning("data in the KDEs:\n%s\n%s"%(kde_good[0].data, kde_bad[0].data))
+						self.logger.warning("bandwidth of the KDEs:\n%s\n%s"%(kde_good[0].bw, kde_bad[0].bw))
 						self.logger.warning("l(x) = %s"%(l(vector)))
 						self.logger.warning("g(x) = %s"%(g(vector)))
 
@@ -306,6 +343,12 @@ class BOHB_Multi_KDE(base_config_generator):
 			# same for non numeric losses.
 			# Note that this means losses of minus infinity will count as bad!
 			losses = job.result["losses"] if np.isfinite(job.result["loss"]) else [np.inf]*n_kdes
+			with open("dump.txt", "a+") as file:													# HERE
+				file.write("CG: REGISTER NEW RESULT FOR BUDGET " + str(budget) + " ... FOUND LOSSES " + str(losses) +"\n")
+			print("CG: REGISTER NEW RESULT FOR BUDGET", budget, "... FOUND LOSSES", losses)
+
+		# update as many kdes as there are losses
+		n_kdes = len(losses)
 
 		# if the budget has not been seen by a new kde, initialize its configs dict with an empty list
 		for ind in range(n_kdes):
@@ -323,21 +366,36 @@ class BOHB_Multi_KDE(base_config_generator):
 		for ind in range(n_kdes):
 			self.configs[ind][budget].append(conf.get_array())
 			self.losses[ind][budget].append(losses[ind])
+			with open("dump.txt", "a+") as file:													# HERE
+				file.write("CG APPENDING LOSSES TO COLLECTION: " + str(self.losses) + "\n")
+			print("CG APPENDING LOSSES TO COLLECTION:", self.losses)
 
 
-		# skip model building:
-		#		a) if not enough points are available
-		if len(self.configs[0][budget]) <= self.min_points_in_model-1:
-			self.logger.debug("Only %i run(s) for budget %f available, need more than %s -> can't build model!"%(len(self.configs[0][budget]), budget, self.min_points_in_model+1))
-			return
-
-		#		b) during warnm starting when we feed previous results in and only update once
-		if not update_model:
-			return
+		all_configs = np.array(self.configs[0][budget])
 
 		for ind in range(n_kdes):
+
+			# skip model building:
+			#		a) if not enough points are available
+			if len(self.configs[ind][budget]) <= self.min_points_in_model-1:
+				self.logger.debug("Only %i run(s) for budget %f available, need more than %s -> can't build model!"%(len(self.configs[ind][budget]), budget, self.min_points_in_model+1))
+				if ind==n_kdes-1:
+					return
+				else:
+					continue
+
+			#		b) during warm starting when we feed previous results in and only update once
+			if not update_model:
+				if ind==n_kdes-1:
+					return
+				else:
+					continue
+
 			train_configs = np.array(self.configs[ind][budget])
 			train_losses =  np.array(self.losses[ind][budget])
+			with open("dump.txt", "a+") as file:													# HERE
+				file.write("CG: UPDATING MODEL " + str(ind) + " WITH LOSS " + str(train_losses) +"\n")
+			print("CG: UPDATING MODEL", ind, "WITH LOSS", train_losses)
 
 			n_good= max(self.min_points_in_model, (self.top_n_percent * train_configs.shape[0])//100 )
 			#n_bad = min(max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100), 10)
