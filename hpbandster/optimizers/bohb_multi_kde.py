@@ -142,7 +142,7 @@ class BOHB_Multi_KDE(Master):
 		"""
 		# update cg kde order
 		if self.permutations is not None:
-			print("BOHB_MULTI: SH ITERATION", iteration, "PERMUTING KDES TO", self.permutations[iteration%len(self.permutations)])
+			print("BOHB_MULTI_KDE: SH ITERATION", iteration, "PERMUTING KDES TO", self.permutations[iteration%len(self.permutations)])
 			self.config_generator.permute_kdes(self.permutations[iteration%len(self.permutations)])
 		
 		# number of 'SH rungs'

@@ -95,6 +95,9 @@ class BOHB_Multi_KDE(base_config_generator):
 		self.good_config_rankings = np.array([dict() for i in range(self.max_kdes)])
 		self.kde_models = np.array([dict() for i in range(self.max_kdes)])
 		self.last_permutation = [idx for idx in range(len(self.kde_models))]
+		print("CG: INITIALIZED CONFIGS", self.configs)
+		print("CG: INITIALIZED LOSSES", self.losses)
+		print("CG: INITIALIZED KDE MODELS", self.kde_models)
 
 	def permute_kdes(self, permutation):
 		self.invert_permutations()
@@ -141,22 +144,30 @@ class BOHB_Multi_KDE(base_config_generator):
 		"""
 		
 		self.logger.debug('start sampling a new configuration.')
-		
 
+		n_kdes = self.max_kdes
+
+		# UNCOMMENT THIS TO ONLY SAMPLE FROM KDES FOR ACTIVE DATASETS
 		# Infer number of KDEs to use at current budget (mimic MultiAutoPyTorch implementation)
-		max_datasets = self.max_kdes
-		max_steps = len(self.budgets)
-		current_step = max_steps - int((math.log(max(self.budgets)) - math.log(budget)) / math.log(3)) if budget > 1e-10 else 0
-		n_kdes = math.floor(math.pow(max_datasets, current_step/max(1, max_steps)) + 1e-10)
+		#max_datasets = self.max_kdes
+		#max_steps = len(self.budgets)
+		#current_step = max_steps - int((math.log(max(self.budgets)) - math.log(budget)) / math.log(3)) if budget > 1e-10 else 0
+		#n_kdes = math.floor(math.pow(max_datasets, current_step/max(1, max_steps)) + 1e-10)
 
-		print("CG: SAMPLING CONFIG FOR BUDGET", budget, "... USING", n_kdes, "KDE MODELS")									# HERE
+		print("CG: SAMPLING CONFIG FOR BUDGET", budget, "... USING", n_kdes, "KDE MODELS")										# HERE
 
 		sample = None
 		info_dict = {}
 		
 		# If no model is available, sample from prior
 		# also mix in a fraction of random configs
-		if len(self.kde_models[0].keys()) == 0 or np.random.rand() < self.random_fraction:
+		no_kde_models = True
+		for ind in range(n_kdes):					# check if there are kde models
+			if len(self.kde_models[ind].keys()) != 0:
+				no_kde_models = False
+				break
+		if no_kde_models or np.random.rand() < self.random_fraction:
+			print("CG: No KDE models found and/or sampling randomly")												# HERE
 			sample =  self.configspace.sample_configuration()
 			info_dict['model_based_pick'] = False
 
@@ -165,16 +176,14 @@ class BOHB_Multi_KDE(base_config_generator):
 
 		if sample is None:
 			try:
-				
-				#sample from largest budget
-				budget = max(self.kde_models[0].keys())     # UNSURE (following lines: pdfs combined correctly? initialize new pdfs with old?)
+				# Create objective function (g/l), accumulate seen configs/datums
 				l = []
 				g = []
 				kde_good = []
 				kde_bad = []
-
 				for ind in range(n_kdes):
-					if len(self.kde_models[ind].keys()) > 0:
+					budget = max(self.kde_models[ind].keys())									# Get largest budget of current kde model
+					if len(self.kde_models[ind].keys()) > 0:									# Add if dataset has a kde model
 						print("CG: APPENDING KDE MODEl", ind)									# HERE
 						l.append(self.kde_models[ind][budget]['good'].pdf)
 						g.append(self.kde_models[ind][budget]['bad' ].pdf)
@@ -183,14 +192,30 @@ class BOHB_Multi_KDE(base_config_generator):
 
 				mean_g = lambda x: np.mean(np.array([func.__call__(x) for func in g]))
 				mean_l = lambda x: np.mean(np.array([func.__call__(x) for func in l]))
-				minimize_me = lambda x: max(1e-32,mean_g(x))/max(mean_l(x),1e-32)			# g/l becomes mean over all g/ mean over all l
-				
+				minimize_me = lambda x: max(1e-32,mean_g(x))/max(mean_l(x),1e-32)							# g/l becomes mean over all g/ mean over all l
+
+				# CHANGE KDE_GOOD TO KDES_GOOOD ABOVE (*2)
+				# Accumulate data, bws
+				datums = []
+				bws = []
+				for kde in kde_good:
+					for datum in kde.data:
+						if datum not in datums:			# append data and bw without duplicates
+							datums.append(datum)
+							bws.append(kde.bw)
+				idx = np.random.randint(0, len(datums))
+				datums = datums[idx]					# shuffle, as array?
+
+
+				# Sample num_samples
 				for i in range(self.num_samples):
-					idx = np.random.randint(0, len(kde_good[0].data))		# ALL CONFIGS SEEN ARE IN THE 0th KDE
-					datum = kde_good[0].data[idx]
+					idx = np.random.randint(0, len(kde_good[0].data))								# delete
+					datum = kde_good[0].data[idx]											# delete
+					if i==0:
+						print("CG: DATUM:", datum, ", BW:", kde_good[0].bw)							# HERE
 					vector = []
 					
-					for m,bw,t in zip(datum, kde_good[0].bw, self.vartypes):
+					for m,bw,t in zip(datum, kde_good[0].bw, self.vartypes):							# datum -> datums, bw -> bws?
 						
 						bw = max(bw, self.min_bandwidth)
 						if t == 0:
@@ -277,7 +302,6 @@ class BOHB_Multi_KDE(base_config_generator):
 		return sample, info_dict
 
 
-
 	def impute_conditional_data(self, array):
 
 		return_array = np.empty_like(array)
@@ -326,17 +350,15 @@ class BOHB_Multi_KDE(base_config_generator):
 		super().new_result(job)
 
 		budget = job.kwargs["budget"]
-		# Infer number of KDEs to use at current budget
-		n_kdes = np.where(self.budgets==budget)[0][0] + 1
 
 		if job.result is None:
 			# One could skip crashed results, but we decided to
 			# assign a +inf loss and count them as bad configurations
-			losses = [np.inf]*n_kdes
+			losses = [np.inf]*self.max_kdes
 		else:
 			# same for non numeric losses.
 			# Note that this means losses of minus infinity will count as bad!
-			losses = job.result["losses"] if np.isfinite(job.result["loss"]) else [np.inf]*n_kdes
+			losses = job.result["losses"] if np.isfinite(job.result["loss"]) else [np.inf]*self.max_kdes
 			print("CG: REGISTER NEW RESULT FOR BUDGET", budget, "... FOUND LOSSES", losses)								# HERE
 
 		# update as many kdes as there are losses
@@ -346,26 +368,26 @@ class BOHB_Multi_KDE(base_config_generator):
 		for ind in range(n_kdes):
 			if budget not in self.configs[ind].keys():
 				self.configs[ind][budget] = []
-				self.losses[ind][budget] = []                 # careful losses is not self.losses
+				self.losses[ind][budget] = []													# careful losses is not self.losses
+				print("CG: BUDGET", budget, "NOT FOUND IN KDE", ind, ", INITIALIZING TO", self.losses[ind])					# HERE
 
-		# skip model building if we already have a bigger model
-		if max(list(self.kde_models[0].keys()) + [-np.inf]) > budget:
-			return
 
 		# We want to get a numerical representation of the configuration in the original space
-
 		conf = ConfigSpace.Configuration(self.configspace, job.kwargs["config"])
+
 		for ind in range(n_kdes):
+
+			# skip model building if we already have a bigger model
+			if max(list(self.kde_models[ind].keys()) + [-np.inf]) > budget:
+				print("CG: SKIPPING KDE MODEL BUILDIGN FOR MODEL", ind)										# HERE
+				if ind == n_kdes-1:
+					return
+				else:
+					continue
+
 			self.configs[ind][budget].append(conf.get_array())
 			self.losses[ind][budget].append(losses[ind])
-			with open("dump.txt", "a+") as file:													# HERE
-				file.write("CG APPENDING LOSSES TO COLLECTION: " + str(self.losses) + "\n")
-			print("CG APPENDING LOSSES TO COLLECTION:", self.losses)
-
-
-		all_configs = np.array(self.configs[0][budget])
-
-		for ind in range(n_kdes):
+			print("CG: APPENDING LOSSES TO COLLECTION:", self.losses)										# HERE
 
 			# skip model building:
 			#		a) if not enough points are available
