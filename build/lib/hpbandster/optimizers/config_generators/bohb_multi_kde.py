@@ -100,11 +100,13 @@ class BOHB_Multi_KDE(base_config_generator):
 		print("CG: INITIALIZED KDE MODELS", self.kde_models)
 
 	def permute_kdes(self, permutation):
+		print("CG: KDE Models before permutation:", self.kde_models)
 		self.invert_permutations()
 		self.configs = self.configs[permutation]
 		self.losses = self.losses[permutation]
 		self.good_config_rankings = self.good_config_rankings[permutation]
 		self.kde_models = self.kde_models[permutation]
+		print("CG: KDE Models after permutation:", self.kde_models)
 
 		self.last_permutation = permutation
 
@@ -120,11 +122,6 @@ class BOHB_Multi_KDE(base_config_generator):
 		for i,p in enumerate(perm):
 			inverse[p] = i
 		return inverse
-
-	def largest_budget_with_model(self):
-		if len(self.kde_models[0]) == 0:
-			return(-float('inf'))
-		return(max(self.kde_models[0].keys()))
 
 	def get_config(self, budget):
 		"""
@@ -182,9 +179,9 @@ class BOHB_Multi_KDE(base_config_generator):
 				kde_good = []
 				kde_bad = []
 				for ind in range(n_kdes):
-					budget = max(self.kde_models[ind].keys())									# Get largest budget of current kde model
 					if len(self.kde_models[ind].keys()) > 0:									# Add if dataset has a kde model
 						print("CG: APPENDING KDE MODEl", ind)									# HERE
+						budget = max(self.kde_models[ind].keys())								# Get max budget model
 						l.append(self.kde_models[ind][budget]['good'].pdf)
 						g.append(self.kde_models[ind][budget]['bad' ].pdf)
 						kde_good.append(self.kde_models[ind][budget]['good'])
@@ -199,6 +196,8 @@ class BOHB_Multi_KDE(base_config_generator):
 				datums = []
 				bws = []
 				for kde in kde_good:
+					print("CG: KDE DATA", kde.data)											# HERE
+					print("CG: KDE BW", kde.bw)											# HERE
 					for datum in kde.data:
 						if datum not in datums:			# append data and bw without duplicates
 							datums.append(datum)
@@ -379,7 +378,7 @@ class BOHB_Multi_KDE(base_config_generator):
 
 			# skip model building if we already have a bigger model
 			if max(list(self.kde_models[ind].keys()) + [-np.inf]) > budget:
-				print("CG: SKIPPING KDE MODEL BUILDIGN FOR MODEL", ind)										# HERE
+				print("CG: SKIPPING KDE MODEL BUILDING FOR MODEL", ind)										# HERE
 				if ind == n_kdes-1:
 					return
 				else:
@@ -441,7 +440,6 @@ class BOHB_Multi_KDE(base_config_generator):
 							'bad' : bad_kde
 							}
 
-			if ind==0:
-				# update probs for the categorical parameters for later sampling
-				self.logger.debug('done building a new model for budget %f based on %i/%i split\nBest loss for this budget:%f\n\n\n\n\n'%(budget, n_good, n_bad, np.min(train_losses)))
+			# update probs for the categorical parameters for later sampling
+			self.logger.debug('done building a new model for budget %f based on %i/%i split\nBest loss for this budget:%f\n\n\n\n\n'%(budget, n_good, n_bad, np.min(train_losses)))
 
