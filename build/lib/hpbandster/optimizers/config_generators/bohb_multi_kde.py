@@ -199,22 +199,23 @@ class BOHB_Multi_KDE(base_config_generator):
 					print("CG: KDE DATA", kde.data)											# HERE
 					print("CG: KDE BW", kde.bw)											# HERE
 					for datum in kde.data:
-						if datum not in datums:			# append data and bw without duplicates
-							datums.append(datum)
-							bws.append(kde.bw)
-				idx = np.random.randint(0, len(datums))
-				datums = datums[idx]					# shuffle, as array?
-
+						datums.append(datum)
+						bws.append(kde.bw)
 
 				# Sample num_samples
 				for i in range(self.num_samples):
-					idx = np.random.randint(0, len(kde_good[0].data))								# delete
-					datum = kde_good[0].data[idx]											# delete
-					if i==0:
-						print("CG: DATUM:", datum, ", BW:", kde_good[0].bw)							# HERE
+					idx = np.random.randint(0, len(datums))
+					datum = datums[idx]												# sample random data point
+					if idx < len(bws):
+						bw = bws[idx]												# get according bw (alterantive: average bws)
+					else:
+						idx2 = np.random.randint(0, len(bws))
+						bw = bws[idx2]	
 					vector = []
-					
-					for m,bw,t in zip(datum, kde_good[0].bw, self.vartypes):							# datum -> datums, bw -> bws?
+					if i==0:
+						print("Sampled data point:", datum, "sampled bw:", bw)							# HERE
+				
+					for m,bw,t in zip(datum, bw, self.vartypes):
 						
 						bw = max(bw, self.min_bandwidth)
 						if t == 0:
@@ -222,8 +223,8 @@ class BOHB_Multi_KDE(base_config_generator):
 							try:
 								vector.append(sps.truncnorm.rvs(-m/bw,(1-m)/bw, loc=m, scale=bw))
 							except:
-								self.logger.warning("Truncated Normal failed for:\ndatum=%s\nbandwidth=%s\nfor entry with value %s"%(datum, kde_good[0].bw, m))
-								self.logger.warning("data in the KDE:\n%s"%kde_good[0].data)
+								self.logger.warning("Truncated Normal failed for:\ndatum=%s\nbandwidth=%s\nfor entry with value %s"%(datum, bw, m))
+								self.logger.warning("data in the KDE:\n%s"%datums)
 						else:
 							
 							if np.random.rand() < (1-bw):
@@ -234,15 +235,15 @@ class BOHB_Multi_KDE(base_config_generator):
 
 					if not np.isfinite(val):
 						self.logger.warning('sampled vector: %s has EI value %s'%(vector, val))
-						self.logger.warning("data in the KDEs:\n%s\n%s"%(kde_good[0].data, kde_bad[0].data))
-						self.logger.warning("bandwidth of the KDEs:\n%s\n%s"%(kde_good[0].bw, kde_bad[0].bw))
-						self.logger.warning("l(x) = %s"%(l(vector)))
-						self.logger.warning("g(x) = %s"%(g(vector)))
+						self.logger.warning("data in the KDEs:\n%s\n%s"%(datums, datums))
+						self.logger.warning("bandwidth of the KDEs:\n%s\n%s"%(bw, bw))
+						self.logger.warning("l(x) = %s"%(mean_l(vector)))
+						self.logger.warning("g(x) = %s"%(mean_g(vector)))
 
 						# right now, this happens because a KDE does not contain all values for a categorical parameter
 						# this cannot be fixed with the statsmodels KDE, so for now, we are just going to evaluate this one
 						# if the good_kde has a finite value, i.e. there is no config with that value in the bad kde, so it shouldn't be terrible.
-						if np.isfinite(l(vector)):
+						if np.isfinite(mean_l(vector)):
 							best_vector = vector
 							break
 
@@ -255,7 +256,7 @@ class BOHB_Multi_KDE(base_config_generator):
 					sample = self.configspace.sample_configuration().get_dictionary()
 					info_dict['model_based_pick']  = False
 				else:
-					self.logger.debug('best_vector: {}, {}, {}, {}'.format(best_vector, best, l(best_vector), g(best_vector)))
+					self.logger.debug('best_vector: {}, {}, {}, {}'.format(best_vector, best, mean_l(best_vector), mean_g(best_vector)))
 					for i, hp_value in enumerate(best_vector):
 						if isinstance(
 							self.configspace.get_hyperparameter(

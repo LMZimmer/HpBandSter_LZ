@@ -95,7 +95,6 @@ class BOHB_Multi_KDE(Master):
 		self.max_SH_iter = -int(np.log(min_budget/max_budget)/np.log(eta)) + 1
 		self.budgets = max_budget * np.power(eta, -np.linspace(self.max_SH_iter-1, 0, self.max_SH_iter))
 
-		print("BOHB_MULTI_KDE: MAXITER:", self.max_SH_iter, ", BUDGETS:", self.budgets, ", ETA:", self.eta)					# HERE
 
 		cg = CG_BOHB_Multi_KDE(	configspace = configspace,
 					min_points_in_model = min_points_in_model,
@@ -142,7 +141,7 @@ class BOHB_Multi_KDE(Master):
 		"""
 		# update cg kde order
 		if self.permutations is not None:
-			print("BOHB_MULTI_KDE: SH ITERATION", iteration, "PERMUTING KDES TO", self.permutations[iteration%len(self.permutations)])	# HERE
+			print("BOHB_MULTI_KDE: SH ITERATION", iteration, "PERMUTING KDES TO", self.permutations[iteration%len(self.permutations)])
 			self.config_generator.permute_kdes(self.permutations[iteration%len(self.permutations)])
 		
 		# number of 'SH rungs'
@@ -150,7 +149,5 @@ class BOHB_Multi_KDE(Master):
 		# number of configurations in that bracket
 		n0 = int(np.floor((self.max_SH_iter)/(s+1)) * self.eta**s)
 		ns = [max(int(n0*(self.eta**(-i))), 1) for i in range(s+1)]
-
-		print("BOHB_MULTI_KDE: GETTING NEXT ITERATION... MAXITER:", self.max_SH_iter, ", ITERATION:", iteration, "BUDGETS:", self.budgets)		# HERE
 
 		return(SuccessiveHalving(HPB_iter=iteration, num_configs=ns, budgets=self.budgets[(-s-1):], config_sampler=self.config_generator.get_config, **iteration_kwargs))

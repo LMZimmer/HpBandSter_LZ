@@ -89,24 +89,19 @@ class BOHB_Multi_KDE(base_config_generator):
 		
 
                 # initialize as many KDEs as there are successive halfing iterations
-		print("CG: INITIALIZING BOHB_MULTI_KDE. CREATING", n_kdes, "KDE MODELS...")					# HERE
+		self.logger.debug("CG: INITIALIZING BOHB_MULTI_KDE. CREATING", n_kdes, "KDE MODELS...")
 		self.configs = np.array([dict() for i in range(self.max_kdes)])
 		self.losses = np.array([dict() for i in range(self.max_kdes)])
 		self.good_config_rankings = np.array([dict() for i in range(self.max_kdes)])
 		self.kde_models = np.array([dict() for i in range(self.max_kdes)])
 		self.last_permutation = [idx for idx in range(len(self.kde_models))]
-		print("CG: INITIALIZED CONFIGS", self.configs)
-		print("CG: INITIALIZED LOSSES", self.losses)
-		print("CG: INITIALIZED KDE MODELS", self.kde_models)
 
 	def permute_kdes(self, permutation):
-		print("CG: KDE Models before permutation:", self.kde_models)
 		self.invert_permutations()
 		self.configs = self.configs[permutation]
 		self.losses = self.losses[permutation]
 		self.good_config_rankings = self.good_config_rankings[permutation]
 		self.kde_models = self.kde_models[permutation]
-		print("CG: KDE Models after permutation:", self.kde_models)
 
 		self.last_permutation = permutation
 
@@ -151,8 +146,6 @@ class BOHB_Multi_KDE(base_config_generator):
 		#current_step = max_steps - int((math.log(max(self.budgets)) - math.log(budget)) / math.log(3)) if budget > 1e-10 else 0
 		#n_kdes = math.floor(math.pow(max_datasets, current_step/max(1, max_steps)) + 1e-10)
 
-		print("CG: SAMPLING CONFIG FOR BUDGET", budget, "... USING", n_kdes, "KDE MODELS")										# HERE
-
 		sample = None
 		info_dict = {}
 		
@@ -164,7 +157,6 @@ class BOHB_Multi_KDE(base_config_generator):
 				no_kde_models = False
 				break
 		if no_kde_models or np.random.rand() < self.random_fraction:
-			print("CG: No KDE models found and/or sampling randomly")												# HERE
 			sample =  self.configspace.sample_configuration()
 			info_dict['model_based_pick'] = False
 
@@ -180,7 +172,6 @@ class BOHB_Multi_KDE(base_config_generator):
 				kde_bad = []
 				for ind in range(n_kdes):
 					if len(self.kde_models[ind].keys()) > 0:									# Add if dataset has a kde model
-						print("CG: APPENDING KDE MODEl", ind)									# HERE
 						budget = max(self.kde_models[ind].keys())								# Get max budget model
 						l.append(self.kde_models[ind][budget]['good'].pdf)
 						g.append(self.kde_models[ind][budget]['bad' ].pdf)
@@ -196,24 +187,21 @@ class BOHB_Multi_KDE(base_config_generator):
 				datums = []
 				bws = []
 				for kde in kde_good:
-					print("CG: KDE DATA", kde.data)											# HERE
-					print("CG: KDE BW", kde.bw)											# HERE
 					for datum in kde.data:
 						datums.append(datum)
 						bws.append(kde.bw)
-				idx = np.random.randint(0, len(datums))
-				datums = datums[idx]					# shuffle, as array?
-
 
 				# Sample num_samples
 				for i in range(self.num_samples):
 					idx = np.random.randint(0, len(datums))
-					datum = datums[idx]												# sample random datum and bw (?)
-					idx2 = np.random.randint(0, len(bws))
-					bw = bws[idx2]
-					
+					datum = datums[idx]												# sample random data point
+					if idx < len(bws):
+						bw = bws[idx]												# get according bw (alterantive: average bws)
+					else:
+						idx2 = np.random.randint(0, len(bws))
+						bw = bws[idx2]	
 					vector = []
-					
+				
 					for m,bw,t in zip(datum, bw, self.vartypes):
 						
 						bw = max(bw, self.min_bandwidth)
@@ -222,8 +210,8 @@ class BOHB_Multi_KDE(base_config_generator):
 							try:
 								vector.append(sps.truncnorm.rvs(-m/bw,(1-m)/bw, loc=m, scale=bw))
 							except:
-								self.logger.warning("Truncated Normal failed for:\ndatum=%s\nbandwidth=%s\nfor entry with value %s"%(datum, kde_good[0].bw, m))
-								self.logger.warning("data in the KDE:\n%s"%kde_good[0].data)
+								self.logger.warning("Truncated Normal failed for:\ndatum=%s\nbandwidth=%s\nfor entry with value %s"%(datum, bw, m))
+								self.logger.warning("data in the KDE:\n%s"%datums)
 						else:
 							
 							if np.random.rand() < (1-bw):
@@ -234,15 +222,15 @@ class BOHB_Multi_KDE(base_config_generator):
 
 					if not np.isfinite(val):
 						self.logger.warning('sampled vector: %s has EI value %s'%(vector, val))
-						self.logger.warning("data in the KDEs:\n%s\n%s"%(kde_good[0].data, kde_bad[0].data))
-						self.logger.warning("bandwidth of the KDEs:\n%s\n%s"%(kde_good[0].bw, kde_bad[0].bw))
-						self.logger.warning("l(x) = %s"%(l(vector)))
-						self.logger.warning("g(x) = %s"%(g(vector)))
+						self.logger.warning("data in the KDEs:\n%s\n%s"%(datums, datums))
+						self.logger.warning("bandwidth of the KDEs:\n%s\n%s"%(bw, bw))
+						self.logger.warning("l(x) = %s"%(mean_l(vector)))
+						self.logger.warning("g(x) = %s"%(mean_g(vector)))
 
 						# right now, this happens because a KDE does not contain all values for a categorical parameter
 						# this cannot be fixed with the statsmodels KDE, so for now, we are just going to evaluate this one
 						# if the good_kde has a finite value, i.e. there is no config with that value in the bad kde, so it shouldn't be terrible.
-						if np.isfinite(l(vector)):
+						if np.isfinite(mean_l(vector)):
 							best_vector = vector
 							break
 
@@ -255,7 +243,7 @@ class BOHB_Multi_KDE(base_config_generator):
 					sample = self.configspace.sample_configuration().get_dictionary()
 					info_dict['model_based_pick']  = False
 				else:
-					self.logger.debug('best_vector: {}, {}, {}, {}'.format(best_vector, best, l(best_vector), g(best_vector)))
+					self.logger.debug('best_vector: {}, {}, {}, {}'.format(best_vector, best, mean_l(best_vector), mean_g(best_vector)))
 					for i, hp_value in enumerate(best_vector):
 						if isinstance(
 							self.configspace.get_hyperparameter(
@@ -358,7 +346,6 @@ class BOHB_Multi_KDE(base_config_generator):
 			# same for non numeric losses.
 			# Note that this means losses of minus infinity will count as bad!
 			losses = job.result["losses"] if np.isfinite(job.result["loss"]) else [np.inf]*self.max_kdes
-			print("CG: REGISTER NEW RESULT FOR BUDGET", budget, "... FOUND LOSSES", losses)								# HERE
 
 		# update as many kdes as there are losses
 		n_kdes = len(losses)
@@ -378,7 +365,6 @@ class BOHB_Multi_KDE(base_config_generator):
 
 			# skip model building if we already have a bigger model
 			if max(list(self.kde_models[ind].keys()) + [-np.inf]) > budget:
-				print("CG: SKIPPING KDE MODEL BUILDING FOR MODEL", ind)										# HERE
 				if ind == n_kdes-1:
 					return
 				else:
@@ -386,7 +372,6 @@ class BOHB_Multi_KDE(base_config_generator):
 
 			self.configs[ind][budget].append(conf.get_array())
 			self.losses[ind][budget].append(losses[ind])
-			print("CG: APPENDING LOSSES TO COLLECTION:", self.losses)										# HERE
 
 			# skip model building:
 			#		a) if not enough points are available
@@ -406,7 +391,6 @@ class BOHB_Multi_KDE(base_config_generator):
 
 			train_configs = np.array(self.configs[ind][budget])
 			train_losses =  np.array(self.losses[ind][budget])
-			print("CG: UPDATING MODEL", ind, "WITH LOSS", train_losses)										# HERE
 
 			n_good= max(self.min_points_in_model, (self.top_n_percent * train_configs.shape[0])//100 )
 			#n_bad = min(max(self.min_points_in_model, ((100-self.top_n_percent)*train_configs.shape[0])//100), 10)
